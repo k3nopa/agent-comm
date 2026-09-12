@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from agent_comm import paths
-from agent_comm.client import ipc
+from agent_comm import ipc
 from agent_comm.client.daemon import run_daemon
 from tests.conftest import RawClient
 

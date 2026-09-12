@@ -23,6 +23,20 @@ async def hub_url() -> AsyncIterator[str]:
         await server.wait_closed()
 
 
+@pytest.fixture
+async def hub_and_url() -> AsyncIterator[tuple[Hub, str]]:
+    """Like hub_url, but also yields the Hub instance itself so tests can seed
+    hub.groups directly without needing the admin unix socket."""
+    hub = Hub()
+    server = await serve(hub.handler, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        yield hub, f"ws://127.0.0.1:{port}"
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
 class RawClient:
     """A minimal hub client used to drive hub behavior directly in tests,
     bypassing the daemon/CLI layers entirely."""

@@ -53,8 +53,10 @@ def test_cleanup_hub_state_removes_files(isolated_home: Path) -> None:
     paths.ensure_state_root()
     paths.hub_pid_file().write_text(str(os.getpid()))
     paths.write_hub_state("127.0.0.1", 8765)
+    paths.hub_sock_file().write_text("")  # stand-in for a real unix socket file
 
     paths.cleanup_hub_state()
 
     assert not paths.hub_pid_file().exists()
     assert not paths.hub_state_file().exists()
+    assert not paths.hub_sock_file().exists()
