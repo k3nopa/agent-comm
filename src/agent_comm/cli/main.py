@@ -16,8 +16,7 @@ import time
 
 import click
 
-from agent_comm import protocol
-from agent_comm.client import ipc
+from agent_comm import ipc, protocol
 from agent_comm.paths import (
     cleanup_hub_state,
     cleanup_state,
@@ -26,6 +25,7 @@ from agent_comm.paths import (
     ensure_state_root,
     hub_is_running,
     hub_log_file,
+    hub_sock_file,
     hub_state_file,
     is_process_alive,
     log_file,
@@ -239,6 +239,92 @@ def hub_restart(host: str, port: int, foreground: bool, timeout: float) -> None:
             "log_file": str(hub_log_file()),
         }
     )
+
+
+def _admin_call(request: dict, timeout: float = 5.0) -> dict:
+    try:
+        return asyncio.run(ipc.call(str(hub_sock_file()), request, timeout=timeout))
+    except ipc.DaemonUnreachable:
+        return {
+            "ok": False,
+            "error": "hub_unreachable",
+            "detail": "hub is not running (or its admin socket is unavailable)",
+        }
+
+
+def _reject_invalid_names(group_name: str, members: tuple[str, ...]) -> dict | None:
+    if not protocol.is_valid_name(group_name):
+        return {"ok": False, "error": "invalid_name", "detail": f"invalid group name: {group_name!r}"}
+    bad = [m for m in members if not protocol.is_valid_name(m)]
+    if bad:
+        return {"ok": False, "error": "invalid_name", "detail": f"invalid member name(s): {bad}"}
+    return None
+
+
+@cli.group()
+def group() -> None:
+    """Admin-only: manage named groups (aliases) for fan-out sends.
+
+    This is a human-operated convenience -- never call it from agent-facing
+    tooling; agents only ever address groups transparently via
+    `send NAME --to '#group'`.
+    """
+
+
+@group.command("set")
+@click.argument("name")
+@click.argument("members", nargs=-1)
+def group_set(name: str, members: tuple[str, ...]) -> None:
+    err = _reject_invalid_names(name, members)
+    if err:
+        _emit(err)
+        return
+    _emit(_admin_call({"cmd": "group_set", "group": name, "members": list(members)}))
+
+
+@group.command("add")
+@click.argument("name")
+@click.argument("members", nargs=-1)
+def group_add(name: str, members: tuple[str, ...]) -> None:
+    err = _reject_invalid_names(name, members)
+    if err:
+        _emit(err)
+        return
+    _emit(_admin_call({"cmd": "group_add", "group": name, "members": list(members)}))
+
+
+@group.command("remove")
+@click.argument("name")
+@click.argument("members", nargs=-1)
+def group_remove(name: str, members: tuple[str, ...]) -> None:
+    err = _reject_invalid_names(name, members)
+    if err:
+        _emit(err)
+        return
+    _emit(_admin_call({"cmd": "group_remove", "group": name, "members": list(members)}))
+
+
+@group.command("delete")
+@click.argument("name")
+def group_delete(name: str) -> None:
+    if not protocol.is_valid_name(name):
+        _emit({"ok": False, "error": "invalid_name", "detail": f"invalid group name: {name!r}"})
+        return
+    _emit(_admin_call({"cmd": "group_delete", "group": name}))
+
+
+@group.command("list")
+def group_list() -> None:
+    _emit(_admin_call({"cmd": "group_list"}))
+
+
+@group.command("show")
+@click.argument("name")
+def group_show(name: str) -> None:
+    if not protocol.is_valid_name(name):
+        _emit({"ok": False, "error": "invalid_name", "detail": f"invalid group name: {name!r}"})
+        return
+    _emit(_admin_call({"cmd": "group_show", "group": name}))
 
 
 @cli.command()

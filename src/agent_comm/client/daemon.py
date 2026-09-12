@@ -16,8 +16,7 @@ from dataclasses import dataclass, field
 from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import ConnectionClosed
 
-from agent_comm import protocol
-from agent_comm.client import ipc
+from agent_comm import ipc, protocol
 from agent_comm.paths import cleanup_state, ensure_state_dir, pid_file, sock_file
 
 logger = logging.getLogger("agent_comm.daemon")
@@ -105,7 +104,12 @@ def _make_handler(state: DaemonState):
                 state.pending.pop(req_id, None)
                 return {"ok": False, "error": "timeout", "detail": f"no ack from hub within {timeout}s"}
             if response.get("type") == "send_ack":
-                return {"ok": True, "delivered": response.get("delivered", True)}
+                result = {"ok": True, "delivered": response.get("delivered", True)}
+                if "recipients" in response:
+                    result["recipients"] = response["recipients"]
+                if "offline" in response:
+                    result["offline_members"] = response["offline"]
+                return result
             return {"ok": False, "error": response.get("code", "error"), "detail": response.get("detail", "")}
 
         if cmd == "wait":
