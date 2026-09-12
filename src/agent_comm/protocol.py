@@ -10,9 +10,19 @@ NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 DEFAULT_HUB_HOST = "127.0.0.1"
 DEFAULT_HUB_PORT = 8765
 
+GROUP_PREFIX = "#"
+
 
 def is_valid_name(name: str) -> bool:
     return bool(NAME_RE.match(name))
+
+
+def is_group_target(to: str) -> bool:
+    return to.startswith(GROUP_PREFIX)
+
+
+def group_name_from_target(to: str) -> str:
+    return to[len(GROUP_PREFIX) :]
 
 
 # --- daemon -> hub ---
@@ -43,8 +53,18 @@ def msg_presence(event: str, name: str) -> dict[str, Any]:
     return {"type": "presence", "event": event, "name": name}
 
 
-def msg_send_ack(req_id: str, delivered: bool) -> dict[str, Any]:
-    return {"type": "send_ack", "req_id": req_id, "delivered": delivered}
+def msg_send_ack(
+    req_id: str,
+    delivered: bool,
+    recipients: list[str] | None = None,
+    offline: list[str] | None = None,
+) -> dict[str, Any]:
+    msg: dict[str, Any] = {"type": "send_ack", "req_id": req_id, "delivered": delivered}
+    if recipients is not None:
+        msg["recipients"] = recipients
+    if offline is not None:
+        msg["offline"] = offline
+    return msg
 
 
 def msg_error(req_id: str | None, code: str, detail: str = "") -> dict[str, Any]:

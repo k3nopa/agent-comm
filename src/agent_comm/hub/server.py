@@ -14,9 +14,17 @@ import websockets
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.exceptions import ConnectionClosed
 
-from agent_comm import protocol
+from agent_comm import ipc, protocol
+from agent_comm.hub.admin import make_admin_handler
+from agent_comm.hub.groups import GroupStore
 from agent_comm.hub.registry import NameTaken, Registry
-from agent_comm.paths import cleanup_hub_state, ensure_state_root, hub_pid_file, write_hub_state
+from agent_comm.paths import (
+    cleanup_hub_state,
+    ensure_state_root,
+    hub_pid_file,
+    hub_sock_file,
+    write_hub_state,
+)
 
 logger = logging.getLogger("agent_comm.hub")
 
@@ -24,6 +32,7 @@ logger = logging.getLogger("agent_comm.hub")
 class Hub:
     def __init__(self) -> None:
         self.registry: Registry[ServerConnection] = Registry()
+        self.groups: GroupStore = GroupStore()
 
     async def _broadcast_presence(self, event: str, name: str) -> None:
         msg = json.dumps(protocol.msg_presence(event, name))
@@ -72,6 +81,10 @@ class Hub:
         req_id = envelope.get("req_id")
         to = envelope.get("to", "")
         body = envelope.get("body", "")
+
+        if protocol.is_group_target(to):
+            return await self._handle_group_send(sender_name, req_id, protocol.group_name_from_target(to), body)
+
         target = self.registry.get(to)
         if target is None:
             return protocol.msg_error(req_id, "unknown_target", f"no such connected name: {to}")
@@ -81,6 +94,29 @@ class Hub:
         except ConnectionClosed:
             return protocol.msg_error(req_id, "unknown_target", f"target disconnected: {to}")
         return protocol.msg_send_ack(req_id, True)
+
+    async def _handle_group_send(
+        self, sender_name: str, req_id: str | None, group_name: str, body: str
+    ) -> dict:
+        members = self.groups.get_members(group_name)
+        if members is None:
+            return protocol.msg_error(req_id, "unknown_group", f"no such group: {group_name}")
+
+        delivered: list[str] = []
+        offline: list[str] = []
+        for member in sorted(members):
+            reg = self.registry.get(member)
+            if reg is None:
+                offline.append(member)
+                continue
+            deliver = protocol.msg_deliver(uuid.uuid4().hex, sender_name, body, datetime.now(UTC).isoformat())
+            try:
+                await reg.conn.send(json.dumps(deliver))
+                delivered.append(member)
+            except ConnectionClosed:
+                offline.append(member)
+
+        return protocol.msg_send_ack(req_id, delivered=bool(delivered), recipients=delivered, offline=offline)
 
     async def handler(self, ws: ServerConnection) -> None:
         name = await self._handle_connect(ws)
@@ -113,12 +149,18 @@ async def run_hub(host: str = protocol.DEFAULT_HUB_HOST, port: int = protocol.DE
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stop_event.set)
 
-    async with serve(hub.handler, host, port) as server:
-        bound_port = server.sockets[0].getsockname()[1]
-        write_hub_state(host, bound_port)
-        logger.info("agent-comm hub listening on ws://%s:%d", host, bound_port)
-        await stop_event.wait()
-        logger.info("hub received shutdown signal, closing")
+    # A stale socket file from a crash would otherwise make bind() fail here.
+    hub_sock_file().unlink(missing_ok=True)
+    admin_server = await ipc.serve_ipc(str(hub_sock_file()), make_admin_handler(hub))
+
+    async with admin_server:
+        async with serve(hub.handler, host, port) as server:
+            bound_port = server.sockets[0].getsockname()[1]
+            write_hub_state(host, bound_port)
+            logger.info("agent-comm hub listening on ws://%s:%d", host, bound_port)
+            logger.info("agent-comm hub admin socket at %s", hub_sock_file())
+            await stop_event.wait()
+            logger.info("hub received shutdown signal, closing")
 
 
 def main(host: str = protocol.DEFAULT_HUB_HOST, port: int = protocol.DEFAULT_HUB_PORT) -> None:
