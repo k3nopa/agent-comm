@@ -1,4 +1,8 @@
-"""Unix-domain-socket JSON-lines IPC between the CLI and a per-name daemon."""
+"""Generic unix-domain-socket JSON-lines IPC.
+
+Used both for CLI <-> per-name daemon (daemon.sock) and CLI <-> hub admin
+channel (hub.sock) -- nothing here is specific to either.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +18,7 @@ class DaemonUnreachable(Exception):
 
 
 async def call(sock_path: str, request: dict[str, Any], timeout: float | None = None) -> dict[str, Any]:
-    """One-shot request/response over the daemon's unix socket. Used by the CLI."""
+    """One-shot request/response over a unix socket. Used by the CLI."""
     try:
         reader, writer = await asyncio.wait_for(asyncio.open_unix_connection(sock_path), timeout=5)
     except (FileNotFoundError, ConnectionRefusedError, OSError, asyncio.TimeoutError):

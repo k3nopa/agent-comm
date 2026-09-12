@@ -91,6 +91,10 @@ def hub_state_file() -> Path:
     return state_root() / "hub.json"
 
 
+def hub_sock_file() -> Path:
+    return state_root() / "hub.sock"
+
+
 def read_hub_pid() -> int | None:
     p = hub_pid_file()
     if not p.exists():
@@ -121,7 +125,7 @@ def read_hub_state() -> dict | None:
 
 
 def cleanup_hub_state() -> None:
-    for f in (hub_pid_file(), hub_state_file()):
+    for f in (hub_pid_file(), hub_state_file(), hub_sock_file()):
         try:
             f.unlink()
         except FileNotFoundError:
