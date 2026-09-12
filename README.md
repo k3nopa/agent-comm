@@ -73,10 +73,19 @@ agent-comm hub stop   # only when you actually want the whole hub down
 | `agent-comm poll NAME [--max]` | Non-blocking drain of pending messages. |
 | `agent-comm disconnect NAME` | Disconnect and stop the local daemon. |
 | `agent-comm status NAME` | Show connection id, known peers, and inbox size. |
+| `agent-comm group set NAME [MEMBERS...]` | Admin-only: define/replace a group's full membership. |
+| `agent-comm group add NAME MEMBERS...` | Admin-only: add member(s) to a group (creates it if new). |
+| `agent-comm group remove NAME MEMBERS...` | Admin-only: remove member(s) from a group. |
+| `agent-comm group delete NAME` | Admin-only: delete a group entirely. |
+| `agent-comm group list` | List all groups and their members. |
+| `agent-comm group show NAME` | Show a group's members and which are currently online. |
 
 Config: `AGENT_COMM_HUB_URL` (default `ws://127.0.0.1:8765`), `AGENT_COMM_HOME`
 (default `~/.agent-comm`) for daemon state (`daemon.pid`, `daemon.sock`,
-`daemon.log` per name) and hub state (`hub.pid`, `hub.log`, `hub.json`).
+`daemon.log` per name) and hub state (`hub.pid`, `hub.log`, `hub.json`,
+`hub.sock`). Groups are in-memory only and cleared on every hub restart;
+`group` commands reach the hub over `hub.sock`, a separate local-only admin
+channel from the public websocket port that `connect`/`send`/etc. use.
 
 ## Using it from a harness
 
@@ -91,6 +100,36 @@ short-timeout polling each turn — `agent-comm wait NAME --timeout 5` or plain
 Two instances of the *same* harness type can talk to each other the same
 way — routing is purely by the name each client picks at connect time, with
 no notion of harness type in the protocol.
+
+## Groups (aliases)
+
+A group is a human-managed alias for a set of names — e.g. "devs" = {dev-1,
+dev-2} — so one agent can broadcast to all of them without knowing who's in
+the group. Group membership is set up manually with `agent-comm group ...`;
+it's an admin convenience, never something an agent does to itself — there's
+no `join`/self-add command, and agent-facing tooling never calls `group`.
+Addressing uses a Slack-style `#` prefix to disambiguate from individual
+names with zero ambiguity: `--to bob` is unchanged and always means the
+individual "bob"; `--to '#devs'` means the group. Groups are in-memory only
+and don't survive a hub restart — redefine them with `group set` afterward.
+
+```
+$ agent-comm group set devs dev-1 dev-2
+{"ok": true, "group": "devs", "members": ["dev-1", "dev-2"]}
+
+# from a QA agent's session:
+$ agent-comm send qa-1 --to '#devs' --msg "regression found in auth.py, please check"
+{"ok": true, "delivered": true, "recipients": ["dev-1", "dev-2"], "offline_members": []}
+
+# dev-1 and dev-2 both pick it up the normal way:
+$ agent-comm wait dev-1 --timeout 30
+{"ok": true, "from": "qa-1", "msg": "regression found in auth.py, please check", "msg_id": "...", "ts": "..."}
+```
+
+A group with no currently-connected members is not an error — you get back
+`"delivered": false` with an empty `recipients` list, not a failure exit
+code. Sending to a name that was never defined as a group at all *is* an
+error: `{"ok": false, "error": "unknown_group", ...}`.
 
 ## Example: two harnesses end-to-end
 
